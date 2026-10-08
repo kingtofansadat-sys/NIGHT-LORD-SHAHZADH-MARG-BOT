@@ -23,81 +23,78 @@ async function startBot() {
 
   const sock = makeWASocket({
     auth: state,
-    markOnlineOnConnect: false
+    markOnlineOnConnect: false,
+    printQRInTerminal: false
   });
 
-  let pairingRequested = false;
+  if (!state.creds.registered) {
+    const phone = await question(
+      "شماره واتساپ را با کد کشور وارد کنید (فقط عدد): "
+    );
 
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, qr } = update;
+    const number = phone.replace(/\D/g, "");
 
-    // گرفتن Pairing Code
-    if (qr && !sock.authState.creds.registered && !pairingRequested) {
-      pairingRequested = true;
+    try {
+      const code = await sock.requestPairingCode(number);
 
-      try {
-        const phone = await question(
-          "شماره واتساپ را با کد کشور وارد کنید (فقط عدد): "
-        );
-
-        const number = phone.replace(/\D/g, "");
-
-        const code = await sock.requestPairingCode(number);
-
-        console.log("");
-        console.log("================================");
-        console.log("🔐 PAIRING CODE:");
-        console.log(code);
-        console.log("================================");
-        console.log("");
-      } catch (error) {
-        console.error("❌ خطا در گرفتن کد:", error);
-        pairingRequested = false;
-      }
+      console.log("");
+      console.log("================================");
+      console.log("🔐 کد اتصال واتساپ:");
+      console.log(code);
+      console.log("================================");
+      console.log("");
+    } catch (error) {
+      console.error("❌ خطا:", error);
     }
+  }
 
-    // اتصال موفق
+  sock.ev.on("creds.update", saveCreds);
+
+  sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
     if (connection === "open") {
       console.log("✅ واتساپ با موفقیت وصل شد!");
-      rl.close();
     }
 
-    // قطع اتصال
     if (connection === "close") {
       const statusCode =
         lastDisconnect?.error instanceof Boom
           ? lastDisconnect.error.output.statusCode
           : null;
 
-      const reconnect =
-        statusCode !== DisconnectReason.loggedOut;
-
-      console.log("❌ اتصال قطع شد.");
-
-      if (reconnect) {
-        console.log("🔄 تلاش برای اتصال دوباره...");
+      if (statusCode !== DisconnectReason.loggedOut) {
+        console.log("🔄 اتصال قطع شد؛ دوباره وصل می‌شوم...");
         startBot();
       } else {
-        console.log("🚪 حساب از ربات خارج شده است.");
+        console.log("🚪 اتصال واتساپ خارج شده است.");
       }
     }
   });
 
-  // ذخیره اطلاعات اتصال
-  sock.ev.on("creds.update", saveCreds);
-
-  // دریافت پیام
-  sock.ev.on("messages.upsert", async (event) => {
-    if (event.type !== "notify") return;
-
-    for (const message of event.messages) {
-      if (message.key.fromMe) continue;
+  sock.ev.on("messages.upsert", async ({ messages }) => {
+    for (const message of messages) {
+      if (!message.message || message.key.fromMe) continue;
 
       const jid = message.key.remoteJid;
 
-      if (!jid) continue;
-
       console.log("📩 پیام جدید از:", jid);
+
+      const text =
+        message.message.conversation ||
+        message.message.extendedTextMessage?.text ||
+        "";
+
+      if (text === "/منو") {
+        await sock.sendMessage(jid, {
+          text:
+`🤖 منوی ربات
+
+/عکس_تایمر
+/ویدیو_تایمر
+/وایس_تایمر
+/دانلود_آهنگ
+/دانلود_ویدیو`
+        });
+      }
     }
   });
 }
